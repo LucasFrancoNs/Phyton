@@ -1,0 +1,358 @@
+import streamlit as st
+import pandas as pd
+import base64
+
+# Assegura que as chaves de session_state essenciais existam
+# É altamente recomendado que esta inicialização seja feita no seu arquivo principal (app.py)
+if "estoque" not in st.session_state:
+    st.session_state["estoque"] = pd.DataFrame(columns=["Nome do Produto", "Quantidade", "Preço de Compra (R$)", "Imagem", "Cor da Tag", "Estoque Mínimo"])
+if "produto_selecionado_id" not in st.session_state:
+    st.session_state["produto_selecionado_id"] = None
+if "carrinho" not in st.session_state: # Para a seção de retirada em lote
+    st.session_state["carrinho"] = {}
+
+def pagina_inicio():
+    st.header("📦 Gerenciamento Completo de Estoque")
+    st.write("---")
+
+    # Garante que as colunas de imagem, cor e estoque mínimo existam
+    # Isso é um fallback caso não sejam inicializadas no app.py
+    if "Imagem" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Imagem"] = None
+    if "Cor da Tag" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Cor da Tag"] = "Nenhuma"
+    if "Estoque Mínimo" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Estoque Mínimo"] = 100
+
+    # Dicionário de cores CSS para as tags
+    cores_css = {
+        "Nenhuma": "transparent",
+        "Vermelho": "#FF0000", "Azul": "#0000FF", "Verde": "#008000",
+        "Amarelo": "#FFFF00", "Laranja": "#FFA500", "Roxo": "#800080",
+        "Preto": "#000000", "Branco": "#FFFFFF"
+    }
+
+    # --- Seção Adicionar/Editar Produto ---
+    st.subheader("Adicionar/Editar Produto")
+
+    with st.form("form_produto"):
+        if st.session_state["produto_selecionado_id"] is not None:
+            produto_para_editar = st.session_state["estoque"].iloc[st.session_state["produto_selecionado_id"]]
+            nome_padrão = produto_para_editar["Nome do Produto"]
+            quantidade_padrao = produto_para_editar["Quantidade"]
+            padrao_preco_compra = produto_para_editar["Preço de Compra (R$)"]
+            padrao_cor_tag = produto_para_editar.get("Cor da Tag", "Nenhuma")
+            padrao_estoque_minimo = produto_para_editar.get("Estoque Mínimo", 100)
+            st.info(f"Editando produto: **{nome_padrão}**")
+        else:
+            nome_padrão = ""
+            quantidade_padrao = 0
+            padrao_preco_compra = 0.0
+            padrao_cor_tag = "Nenhuma"
+            padrao_estoque_minimo = 100
+
+        nome = st.text_input("Nome do Produto", value=nome_padrão, key="input_nome")
+        quantidade = st.number_input("Quantidade", min_value=0, value=quantidade_padrao, step=1, key="input_quantidade")
+        preco_compra = st.number_input("Preço de Compra (R$)", min_value=0.0, value=padrao_preco_compra, step=0.01, format="%.2f", key="input_compra")
+        
+        estoque_minimo = st.number_input("Estoque Mínimo para Alerta", min_value=0, value=padrao_estoque_minimo, step=1, key="input_min_stock")
+
+        uploaded_image = st.file_uploader("Upload de Imagem do Produto (opcional)", type=["png", "jpg", "jpeg"], key="input_image")
+        
+        cores_disponiveis = ["Nenhuma", "Vermelho", "Azul", "Verde", "Amarelo", "Laranja", "Roxo", "Preto", "Branco"]
+        cor_selecionada = st.selectbox("Escolha uma cor para a tag", options=cores_disponiveis, index=cores_disponiveis.index(padrao_cor_tag), key="input_color")
+
+        col1_btn, col2_btn = st.columns(2)
+        with col1_btn:
+            if st.session_state["produto_selecionado_id"] is None:
+                adicionar_button = st.form_submit_button("Adicionar Produto")
+            else:
+                adicionar_button = st.form_submit_button("Salvar Alterações")
+        with col2_btn:
+            if st.session_state["produto_selecionado_id"] is not None:
+                cancelar_edicao_button = st.form_submit_button("Cancelar Edição")
+                if cancelar_edicao_button:
+                    st.session_state["produto_selecionado_id"] = None
+                    st.experimental_rerun()
+
+        if adicionar_button:
+            if not nome:
+                st.error("O nome do produto não pode ser vazio.")
+            elif quantidade < 0:
+                st.error("A quantidade não pode ser negativa.")
+            else:
+                imagem_base64 = None
+                if uploaded_image:
+                    try:
+                        imagem_bytes = uploaded_image.getvalue()
+                        imagem_base64 = base64.b64encode(imagem_bytes).decode('utf-8')
+                    except Exception as e:
+                        st.warning(f"Não foi possível processar a imagem. Erro: {e}")
+                        imagem_base64 = None
+                elif st.session_state["produto_selecionado_id"] is not None:
+                    imagem_base64 = produto_para_editar.get("Imagem")
+
+                novo_produto_data = {
+                    "Nome do Produto": nome,
+                    "Quantidade": quantidade,
+                    "Preço de Compra (R$)": preco_compra,
+                    "Imagem": imagem_base64,
+                    "Cor da Tag": cor_selecionada,
+                    "Estoque Mínimo": estoque_minimo
+                }
+                novo_produto = pd.DataFrame([novo_produto_data])
+
+                if st.session_state["produto_selecionado_id"] is None:
+                    st.session_state["estoque"] = pd.concat([st.session_state["estoque"], novo_produto], ignore_index=True)
+                    st.success(f"Produto '{nome}' adicionado ao estoque!")
+                else:
+                    st.session_state["estoque"].iloc[st.session_state["produto_selecionado_id"]] = novo_produto.iloc[0]
+                    st.success(f"Produto '{nome}' atualizado no estoque!")
+                    st.session_state["produto_selecionado_id"] = None
+
+                st.rerun()
+
+    st.write("---")
+
+    # --- Seção de Visualização do Estoque (com Imagens e Tags) ---
+    st.subheader("Visualização do Estoque")
+
+    if st.session_state["estoque"].empty:
+        st.info("Nenhum produto cadastrado no estoque.")
+    else:
+        # Filtro por Tags de Cor
+        cores_disponiveis_filtro = ["Todas"] + sorted(list(st.session_state["estoque"]["Cor da Tag"].dropna().unique()))
+        filtro_cor_visualizacao = st.selectbox("Filtrar por Tag de Cor na Visualização:", options=cores_disponiveis_filtro, key="filtro_cor_visualizacao")
+
+        df_filtrado_visualizacao = st.session_state["estoque"].copy()
+        if filtro_cor_visualizacao != "Todas":
+            df_filtrado_visualizacao = df_filtrado_visualizacao[df_filtrado_visualizacao["Cor da Tag"] == filtro_cor_visualizacao]
+
+        if df_filtrado_visualizacao.empty:
+            st.info(f"Nenhum produto encontrado com a tag de cor '{filtro_cor_visualizacao}'.")
+        else:
+            cols_per_row = 3 # Número de colunas de produtos por linha
+            
+            produtos_para_exibir_viz = df_filtrado_visualizacao.reset_index().rename(columns={'index': 'ID_Original'})
+
+            cols_viz = st.columns(cols_per_row)
+            col_idx_viz = 0
+
+            for i, row in produtos_para_exibir_viz.iterrows():
+                with cols_viz[col_idx_viz]:
+                    st.markdown(f"**{row['Nome do Produto']}**")
+                    st.write(f"Estoque: {int(row['Quantidade'])} unidades")
+                    st.write(f"Preço de Compra: R$ {row['Preço de Compra (R$)']:.2f}")
+
+                    if row["Imagem"]:
+                        try:
+                            img_data = base64.b64decode(row["Imagem"])
+                            st.image(img_data, width=150, use_container_width="always")
+                        except Exception:
+                            st.image("https://via.placeholder.com/150?text=Sem+Imagem", width=150, use_container_width="always")
+                    else:
+                        st.image("https://via.placeholder.com/150?text=Sem+Imagem", width=150, use_container_width="always")
+
+                    # Tag de cor
+                    if row["Cor da Tag"] != "Nenhuma":
+                        st.markdown(
+                            f"""
+                            <div style="
+                                display: inline-block; 
+                                padding: 5px 10px; 
+                                border-radius: 5px; 
+                                background-color: {cores_css.get(row['Cor da Tag'], 'gray')}; 
+                                color: {'black' if row['Cor da Tag'] in ['Amarelo', 'Branco'] else 'white'}; 
+                                font-size: 0.8em;
+                                margin-top: 5px;
+                            ">
+                                {row['Cor da Tag']}
+                            </div>
+                            """, 
+                            unsafe_allow_html=True
+                        )
+                    
+                    # Botão para editar o produto diretamente da visualização
+                    if st.button(f"Editar {row['Nome do Produto']}", key=f"edit_viz_{row['ID_Original']}"):
+                        st.session_state["produto_selecionado_id"] = row['ID_Original']
+                        st.rerun()
+
+                    st.markdown("---")
+                
+                col_idx_viz = (col_idx_viz + 1) % cols_per_row
+                if col_idx_viz == 0 and i < len(produtos_para_exibir_viz) -1 :
+                    cols_viz = st.columns(cols_per_row)
+    
+    st.write("---")
+
+    # --- Área Privilegiada: Retirar/Ajustar Estoque (Individualmente com Liberdade) ---
+    st.subheader("Retirada/Ajuste de Estoque")
+    st.warning("🚨 **ATENÇÃO:** Esta seção permite ajustar o estoque para valores abaixo de zero (negativos). Use com cautela!")
+    if st.session_state["estoque"].empty:
+        st.info("Nenhum produto no estoque para ajustar.")
+    else:
+        nomes_produtos_ajuste = st.session_state["estoque"]["Nome do Produto"].tolist()
+        produto_a_ajustar_nome = st.selectbox(
+            "Selecione o produto para ajustar:", 
+            options=nomes_produtos_ajuste, 
+            key="select_ajuste_estoque"
+        )
+        
+        idx_produto_ajustar = st.session_state["estoque"].index[st.session_state["estoque"]["Nome do Produto"] == produto_a_ajustar_nome].tolist()
+        
+        if idx_produto_ajustar:
+            idx_produto_ajustar = idx_produto_ajustar[0]
+            produto_atual_ajuste = st.session_state["estoque"].iloc[idx_produto_ajustar]
+            
+            st.info(f"Estoque atual de '{produto_atual_ajuste['Nome do Produto']}': **{int(produto_atual_ajuste['Quantidade'])}** unidades.")
+            
+            quantidade_ajustar = st.number_input(
+                "Quantidade a ajustar (pode ser negativo para baixar, positivo para aumentar):", 
+                value=0,
+                step=1, 
+                key="input_quantidade_ajuste"
+            )
+
+            if st.button("Aplicar Ajuste de Estoque", key="button_ajustar_estoque"):
+                st.session_state["estoque"].loc[idx_produto_ajustar, "Quantidade"] += quantidade_ajustar
+                st.success(f"Estoque de '{produto_atual_ajuste['Nome do Produto']}' ajustado em {quantidade_ajustar} unidades. Novo estoque: {int(st.session_state['estoque'].loc[idx_produto_ajustar, 'Quantidade'])}.")
+                st.rerun()
+        else:
+            st.warning("Produto selecionado não encontrado. Por favor, recarregue a página.")
+
+    st.write("---")
+
+    # --- Seção de Retirada de Produtos (Venda/Múltiplos Itens) ---
+    st.header("🛒 Retirada de Produtos (Venda/Múltiplos Itens)")
+    st.write("Selecione os produtos e as quantidades que deseja retirar do estoque.")
+    st.write("---")
+
+    if st.session_state["estoque"].empty:
+        st.info("Nenhum produto disponível no estoque para retirada em lote.")
+    else:
+        # Pega a lista de nomes de produtos disponíveis para o multiselect
+        # Filtra apenas produtos com quantidade maior que zero para retirada
+        produtos_disponiveis = st.session_state["estoque"][st.session_state["estoque"]["Quantidade"] > 0].copy()
+        
+        if produtos_disponiveis.empty:
+            st.info("Nenhum produto com estoque disponível para retirada.")
+            return
+
+        opcoes_produtos_nomes = produtos_disponiveis["Nome do Produto"].tolist()
+
+        # Multiselect para selecionar os produtos
+        produtos_selecionados_multiselect = st.multiselect(
+            "Selecione os produtos para o carrinho:",
+            options=opcoes_produtos_nomes,
+            default=[
+                produto["Nome do Produto"] for id_prod, produto in produtos_disponiveis.iterrows()
+                if id_prod in st.session_state["carrinho"] and st.session_state["carrinho"][id_prod] > 0
+            ], # Mantém os produtos já no carrinho selecionados
+            key="multiselect_carrinho"
+        )
+
+        # Mapeia os nomes selecionados de volta para os IDs originais do DataFrame
+        produtos_selecionados_ids = [
+            produtos_disponiveis.index[produtos_disponiveis["Nome do Produto"] == nome].tolist()[0]
+            for nome in produtos_selecionados_multiselect
+            if nome in opcoes_produtos_nomes # Garante que o nome ainda existe
+        ]
+        
+        # Limpa o carrinho de itens que não estão mais selecionados no multiselect
+        ids_no_carrinho_atualmente = list(st.session_state["carrinho"].keys())
+        for prod_id in ids_no_carrinho_atualmente:
+            if prod_id not in produtos_selecionados_ids:
+                del st.session_state["carrinho"][prod_id]
+
+        if not produtos_selecionados_ids:
+            st.info("Selecione produtos acima para adicioná-los ao carrinho.")
+        else:
+            st.subheader("Quantidades para Retirada")
+            # Exibe number_input para cada produto selecionado
+            for produto_id in produtos_selecionados_ids:
+                produto = st.session_state["estoque"].loc[produto_id]
+                max_qty = int(produto['Quantidade'])
+                qty_key = f"qty_retirada_lote_{produto_id}"
+                
+                # O valor inicial é a quantidade já no carrinho (se houver)
+                current_qty_in_cart = st.session_state["carrinho"].get(produto_id, 0)
+
+                # Ajusta o max_value para incluir o que já está no carrinho
+                # para que o usuário possa diminuir ou aumentar a quantidade.
+                # Se o produto não está mais disponível no estoque (max_qty=0),
+                # o max_value deve ser o current_qty_in_cart, para que o usuário possa remover.
+                effective_max_value = max_qty + current_qty_in_cart
+                if max_qty == 0 and current_qty_in_cart == 0: # Caso o item tenha sumido do estoque e não esteja no carrinho
+                     effective_max_value = 0 # Não permite adicionar
+
+                quantidade_a_retirar = st.number_input(
+                    f"**{produto['Nome do Produto']}** (Disponível: {max_qty}):",
+                    min_value=0, # Sempre permite remover (setar para 0)
+                    max_value=effective_max_value,
+                    value=current_qty_in_cart,
+                    step=1,
+                    key=qty_key,
+                    help=f"Preço Unitário: R$ {produto['Preço de Compra (R$)']:.2f}"
+                )
+
+                # Atualiza o carrinho com a quantidade inserida
+                if quantidade_a_retirar > 0:
+                    st.session_state["carrinho"][produto_id] = quantidade_a_retirar
+                elif quantidade_a_retirar == 0 and produto_id in st.session_state["carrinho"]:
+                    del st.session_state["carrinho"][produto_id]
+
+            st.markdown("---")
+            st.subheader("Resumo do Carrinho")
+            
+            if not st.session_state["carrinho"]:
+                st.info("Carrinho vazio. Adicione quantidades aos produtos selecionados.")
+            else:
+                carrinho_df_data = []
+                total_valor_retirada_lote = 0
+                for produto_id, quantidade_no_carrinho in st.session_state["carrinho"].items():
+                    produto = st.session_state["estoque"].loc[produto_id]
+                    subtotal = produto["Preço de Compra (R$)"] * quantidade_no_carrinho
+                    carrinho_df_data.append({
+                        "Produto": produto["Nome do Produto"],
+                        "Quantidade": quantidade_no_carrinho,
+                        "Preço Unitário": f"R$ {produto['Preço de Compra (R$)']:.2f}",
+                        "Subtotal": f"R$ {subtotal:.2f}"
+                    })
+                    total_valor_retirada_lote += subtotal
+                
+                carrinho_df = pd.DataFrame(carrinho_df_data)
+                st.table(carrinho_df)
+                st.markdown(f"**Valor Total da Retirada em Lote: R$ {total_valor_retirada_lote:,.2f}**")
+
+                if st.button("Finalizar Retirada (Processar Carrinho)", key="finalizar_retirada_lote_button"):
+                    sucesso_retirada_lote = True
+                    mensagens = []
+                    
+                    # Primeiramente, verifica se há estoque suficiente para TODOS os itens do carrinho
+                    for produto_id, quantidade_retirar in st.session_state["carrinho"].items():
+                        if quantidade_retirar > 0:
+                            produto_no_estoque = st.session_state["estoque"].loc[produto_id]
+                            if produto_no_estoque["Quantidade"] < quantidade_retirar:
+                                sucesso_retirada_lote = False
+                                st.error(f"Erro: Não há estoque suficiente para '{produto_no_estoque['Nome do Produto']}'. Disponível: {int(produto_no_estoque['Quantidade'])}. Tentando retirar: {quantidade_retirar}.")
+                                break
+                    
+                    if sucesso_retirada_lote:
+                        # Se todas as verificações passaram, processa a retirada
+                        for produto_id, quantidade_retirar in st.session_state["carrinho"].items():
+                            if quantidade_retirar > 0:
+                                produto_no_estoque = st.session_state["estoque"].loc[produto_id]
+                                st.session_state["estoque"].loc[produto_id, "Quantidade"] -= quantidade_retirar
+                                mensagens.append(f"{quantidade_retirar} unidades de '{produto_no_estoque['Nome do Produto']}' retiradas.")
+                        
+                        st.success("Retirada em lote finalizada com sucesso!")
+                        for msg in mensagens:
+                            st.write(msg)
+                        st.session_state["carrinho"] = {} # Limpa o carrinho
+                        st.rerun()
+                    else:
+                        st.error("Por favor, ajuste as quantidades no carrinho para finalizar a retirada.")
+
+# Exemplo de como você chamaria esta função no seu arquivo principal (app.py)
+# if __name__ == "__main__":
+#     gerenciar_estoque_completo()

@@ -1,0 +1,490 @@
+import streamlit as st
+import pandas as pd
+import io
+from PIL import Image
+import base64
+
+# --- Inicialização do Session State (CRUCIAL para evitar loops e manter o estado) ---
+# É importante que essas inicializações estejam fora de qualquer função
+# para garantir que sejam executadas apenas uma vez por sessão.
+if "logado" not in st.session_state:
+    st.session_state["logado"] = False
+if "estoque" not in st.session_state:
+    # Inicializa com colunas para evitar KeyError se o CSV não tiver todas
+    st.session_state["estoque"] = pd.DataFrame(columns=[
+        "Nome do Produto", 
+        "Quantidade", 
+        "Preço de Compra (R$)", 
+        "Imagem", 
+        "Cor da Tag", 
+        "Estoque Mínimo"
+    ])
+if "produto_selecionado_id" not in st.session_state:
+    st.session_state["produto_selecionado_id"] = None
+if "carrinho" not in st.session_state:
+    st.session_state["carrinho"] = {} # Dicionário para armazenar {ID_produto: quantidade}
+
+# Função para exibir o alerta de estoque baixo
+def mostar_o_alerta_de_Estoque_baixo(product_name, current_stock, min_stock):
+    st.warning(f"⚠️ **Alerta de Estoque Baixo:** O produto '{product_name}' está com {current_stock} unidades em estoque. O mínimo recomendado é {min_stock}!", icon="🚨")
+
+# --- Página de Gerenciamento de Estoque (ADMIN) ---
+def pagina_gerenciamento_estoque():
+    st.header("📦 Gerenciador de Estoque (Admin)")
+    st.write("---")
+
+    if not st.session_state["logado"]:
+        st.info("Por favor, faça login como administrador para acessar o gerenciador de estoque.")
+        return
+
+    # Garante que as colunas de imagem e cor existam no DataFrame
+    # Isso é importante para DataFrames carregados de CSV, etc.
+    if "Imagem" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Imagem"] = None
+    if "Cor da Tag" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Cor da Tag"] = "Nenhuma"
+    if "Estoque Mínimo" not in st.session_state["estoque"].columns: # Nova coluna
+        st.session_state["estoque"]["Estoque Mínimo"] = 100 # Valor padrão de estoque mínimo
+
+    # --- Seção Adicionar/Editar Produto ---
+    st.subheader("Adicionar/Editar Produto")
+
+    with st.form("form_produto"):
+        if st.session_state["produto_selecionado_id"] is not None:
+            produto_para_editar = st.session_state["estoque"].iloc[st.session_state["produto_selecionado_id"]]
+            nome_padrão = produto_para_editar["Nome do Produto"]
+            quantidade_padrao = produto_para_editar["Quantidade"]
+            padrao_preco_compra = produto_para_editar["Preço de Compra (R$)"]
+            padrao_cor_tag = produto_para_editar.get("Cor da Tag", "Nenhuma")
+            padrao_estoque_minimo = produto_para_editar.get("Estoque Mínimo", 100) # Pega o mínimo existente ou padrão
+            st.info(f"Editando produto: **{nome_padrão}**")
+        else:
+            nome_padrão = ""
+            quantidade_padrao = 0
+            padrao_preco_compra = 0.0
+            padrao_cor_tag = "Nenhuma"
+            padrao_estoque_minimo = 100
+
+        nome = st.text_input("Nome do Produto", value=nome_padrão, key="input_nome")
+        quantidade = st.number_input("Quantidade", min_value=0, value=quantidade_padrao, step=1, key="input_quantidade")
+        preco_compra = st.number_input("Preço de Compra (R$)", min_value=0.0, value=padrao_preco_compra, step=0.01, format="%.2f", key="input_compra")
+        
+        # Novo campo para Estoque Mínimo
+        estoque_minimo = st.number_input("Estoque Mínimo para Alerta", min_value=0, value=padrao_estoque_minimo, step=1, key="input_min_stock")
+
+        uploaded_image = st.file_uploader("Upload de Imagem do Produto (opcional)", type=["png", "jpg", "jpeg"], key="input_image")
+        
+        cores_disponiveis = ["Nenhuma", "Vermelho", "Azul", "Verde", "Amarelo", "Laranja", "Roxo", "Preto", "Branco"]
+        cor_selecionada = st.selectbox("Escolha uma cor para a tag", options=cores_disponiveis, index=cores_disponiveis.index(padrao_cor_tag), key="input_color")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.session_state["produto_selecionado_id"] is None:
+                adicionar_button = st.form_submit_button("Adicionar Produto")
+            else:
+                adicionar_button = st.form_submit_button("Salvar Alterações")
+        with col2:
+            if st.session_state["produto_selecionado_id"] is not None:
+                cancelar_edicao_button = st.form_submit_button("Cancelar Edição")
+                if cancelar_edicao_button:
+                    st.session_state["produto_selecionado_id"] = None
+                    st.experimental_rerun() # Necessário para resetar o formulário
+
+        if adicionar_button:
+            if not nome:
+                st.error("O nome do produto não pode ser vazio.")
+            elif quantidade < 0:
+                st.error("A quantidade não pode ser negativa.")
+            else:
+                imagem_base64 = None
+                if uploaded_image:
+                    try:
+                        imagem_bytes = uploaded_image.getvalue()
+                        imagem_base64 = base64.b64encode(imagem_bytes).decode('utf-8')
+                    except Exception as e:
+                        st.warning(f"Não foi possível processar a imagem. Erro: {e}")
+                        imagem_base64 = None
+                elif st.session_state["produto_selecionado_id"] is not None:
+                    imagem_base64 = produto_para_editar.get("Imagem")
+
+                novo_produto_data = {
+                    "Nome do Produto": nome,
+                    "Quantidade": quantidade,
+                    "Preço de Compra (R$)": preco_compra,
+                    "Imagem": imagem_base64,
+                    "Cor da Tag": cor_selecionada,
+                    "Estoque Mínimo": estoque_minimo
+                }
+                novo_produto = pd.DataFrame([novo_produto_data])
+
+                if st.session_state["produto_selecionado_id"] is None:
+                    st.session_state["estoque"] = pd.concat([st.session_state["estoque"], novo_produto], ignore_index=True)
+                    st.success(f"Produto '{nome}' adicionado ao estoque!")
+                else:
+                    st.session_state["estoque"].iloc[st.session_state["produto_selecionado_id"]] = novo_produto.iloc[0]
+                    st.success(f"Produto '{nome}' atualizado no estoque!")
+                    st.session_state["produto_selecionado_id"] = None
+
+                st.rerun() # Necessário para limpar o formulário e atualizar a tabela
+
+    st.write("---")
+
+    # --- Seção Estoque Atual e Alertas ---
+    st.subheader("Estoque Atual")
+
+    if st.session_state["estoque"].empty:
+        st.info("Seu estoque está vazio. Adicione alguns produtos!")
+    else:
+        # Filtro de busca
+        termo_busca = st.text_input("Buscar produto:", help="Digite o nome do produto para filtrar.", key="search_product")
+        df_exibir = st.session_state["estoque"].copy() # Faz uma cópia para não modificar o DataFrame original durante a filtragem
+
+        if termo_busca:
+            df_exibir = df_exibir[df_exibir["Nome do Produto"].str.contains(termo_busca, case=False, na=False)]
+            if df_exibir.empty:
+                st.warning("Nenhum produto encontrado com o termo de busca.")
+
+        # Cálculos de valor
+        valor_total_compra = (df_exibir["Quantidade"] * df_exibir["Preço de Compra (R$)"]).sum()
+
+        col_metrics1, col_metrics2 = st.columns(2)
+        with col_metrics1:
+            st.metric("Valor Total de Compra", f"R$ {valor_total_compra:,.2f}")
+        with col_metrics2:
+            st.metric("Total de Produtos (unidades)", df_exibir["Quantidade"].sum())
+
+        st.write("---")
+
+        # Exibir alertas de estoque baixo no topo da seção de estoque
+        baixo_estoque_produtos = df_exibir[df_exibir["Quantidade"] < df_exibir["Estoque Mínimo"]]
+        if not baixo_estoque_produtos.empty:
+            st.markdown("### Alertas de Estoque Baixo:")
+            for idx, row in baixo_estoque_produtos.iterrows():
+                mostar_o_alerta_de_Estoque_baixo(row["Nome do Produto"], int(row["Quantidade"]), int(row["Estoque Mínimo"]))
+            st.write("---")
+
+        # Exibir tabela interativa com imagem e tag de cor
+        cores_css = {
+            "Nenhuma": "transparent",
+            "Vermelho": "#FF0000", "Azul": "#0000FF", "Verde": "#008000",
+            "Amarelo": "#FFFF00", "Laranja": "#FFA500", "Roxo": "#800080",
+            "Preto": "#000000", "Branco": "#FFFFFF"
+        }
+
+        # Cria a coluna de visualização para imagem e tag
+        # Garante que o ID corresponde ao índice real do DataFrame subjacente
+        df_display = df_exibir.reset_index().rename(columns={'index': 'ID_Original'}) 
+
+        df_display["Visualizar"] = df_display.apply(lambda row: f"""
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="
+                    width: 50px; 
+                    height: 50px; 
+                    border-radius: 5px;
+                    overflow: hidden;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    border: 1px solid #ddd;
+                ">
+                    {f'<img src="data:image/jpeg;base64,{row["Imagem"]}" style="width: 100%; height: 100%; object-fit: cover;">' if row["Imagem"] else '<span style="font-size: 20px;">🖼️</span>'}
+                </div>
+                <div style="
+                    width: 20px; 
+                    height: 20px; 
+                    border-radius: 50%; 
+                    background-color: {cores_css.get(row['Cor da Tag'], 'transparent')}; 
+                    border: 1px solid #ccc;
+                "></div>
+            </div>
+        """, axis=1)
+
+        # Usando st.data_editor para edição interativa (Streamlit >= 1.23.0)
+        # Permite edição direta da quantidade e do estoque mínimo
+        edited_df = st.data_editor(
+            df_display[["ID_Original", "Visualizar", "Nome do Produto", "Quantidade", "Preço de Compra (R$)", "Estoque Mínimo", "Cor da Tag"]],
+            column_config={
+                "ID_Original": st.column_config.Column(width="small", disabled=True),
+                "Visualizar": st.column_config.Column(width="small", disabled=True),
+                "Nome do Produto": st.column_config.Column(width="medium", disabled=True),
+                "Quantidade": st.column_config.NumberColumn(format="%d", min_value=0, step=1, width="small"),
+                "Preço de Compra (R$)": st.column_config.NumberColumn(format="R$ %.2f", width="small", disabled=True),
+                "Estoque Mínimo": st.column_config.NumberColumn(format="%d", min_value=0, step=1, width="small"),
+                "Cor da Tag": st.column_config.TextColumn(disabled=True) # Melhor desabilitar para não editar direto aqui
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="estoque_table_editor"
+        )
+        
+        # Detectar se houve alterações e atualizar o DataFrame principal
+        # AQUI É ONDE O st.rerun() FOI REMOVIDO!
+        if not edited_df.equals(df_display):
+            for _, row in edited_df.iterrows():
+                original_idx = row['ID_Original']
+                st.session_state["estoque"].loc[original_idx, "Quantidade"] = row["Quantidade"]
+                st.session_state["estoque"].loc[original_idx, "Estoque Mínimo"] = row["Estoque Mínimo"]
+            st.success("Estoque atualizado pela tabela!")
+            # st.rerun() # REMOVIDO!
+
+        st.write("---")
+        st.subheader("Ações do Estoque")
+
+        # Botões de ação para cada linha (Editar/Remover)
+        # É mais eficiente criar colunas para os botões fora do dataframe quando o data_editor é usado para a tabela
+        for i, row in df_exibir.reset_index().iterrows():
+            col_id, col_nome, col_edit, col_delete = st.columns([0.5, 4, 1, 1])
+            with col_id:
+                st.write(f"**ID:** {row['index']}")
+            with col_nome:
+                st.write(f"**Produto:** {row['Nome do Produto']}")
+            with col_edit:
+                if st.button("✏️ Editar", key=f"edit_individual_{row['index']}", help="Editar este produto"):
+                    st.session_state["produto_selecionado_id"] = row['index']
+                    st.experimental_rerun() # Necessário para carregar os dados no formulário
+            with col_delete:
+                if st.button("🗑️ Remover", key=f"delete_individual_{row['index']}", help="Remover este produto"):
+                    st.session_state["estoque"] = st.session_state["estoque"].drop(row['index']).reset_index(drop=True)
+                    st.success(f"Produto '{row['Nome do Produto']}' removido com sucesso!")
+                    st.session_state["produto_selecionado_id"] = None # Limpa a seleção de edição
+                    st.rerun() # Necessário para atualizar a tabela
+
+        st.write("---")
+        st.subheader("Importar/Exportar Dados")
+
+        uploaded_file = st.file_uploader("Carregar estoque de um arquivo CSV", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df_upload = pd.read_csv(uploaded_file)
+                # Garante que as colunas essenciais para o app existem no CSV carregado
+                for col in ["Imagem", "Cor da Tag", "Estoque Mínimo"]:
+                    if col not in df_upload.columns:
+                        # Define valores padrão se as colunas não existirem no CSV
+                        df_upload[col] = None if col == "Imagem" else ("Nenhuma" if col == "Cor da Tag" else 100)
+                
+                expected_cols = ["Nome do Produto", "Quantidade", "Preço de Compra (R$)", "Imagem", "Cor da Tag", "Estoque Mínimo"]
+                if all(col in df_upload.columns for col in expected_cols):
+                    st.session_state["estoque"] = df_upload[expected_cols]
+                    st.success("Estoque carregado com sucesso!")
+                    st.rerun() # Necessário para carregar os novos dados na interface
+                else:
+                    st.error(f"O arquivo CSV deve conter as colunas: {', '.join(expected_cols)}")
+            except Exception as e:
+                st.error(f"Erro ao carregar o arquivo CSV: {e}")
+
+        if not st.session_state["estoque"].empty:
+            csv_buffer = io.StringIO()
+            st.session_state["estoque"].to_csv(csv_buffer, index=False)
+            csv_bytes = csv_buffer.getvalue().encode('utf-8')
+
+            st.download_button(
+                label="Baixar Estoque (CSV)",
+                data=csv_bytes,
+                file_name="meu_estoque.csv",
+                mime="text/csv",
+                help="Baixa os dados do seu estoque atual em formato CSV."
+            )
+
+# --- Nova Página de Vendas/Retirada (USUÁRIO COMUM) ---
+def pagina_venda():
+    st.header("🛒 Vendas / Retirada de Produtos")
+    st.write("---")
+
+    # Garante que as colunas de imagem e cor existam
+    if "Imagem" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Imagem"] = None
+    if "Cor da Tag" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Cor da Tag"] = "Nenhuma"
+    if "Estoque Mínimo" not in st.session_state["estoque"].columns:
+        st.session_state["estoque"]["Estoque Mínimo"] = 100
+
+    if st.session_state["estoque"].empty:
+        st.info("Nenhum produto disponível no estoque.")
+        return
+
+    # --- Filtro por Tags de Cor ---
+    cores_disponiveis = ["Todas"] + list(st.session_state["estoque"]["Cor da Tag"].dropna().unique())
+    filtro_cor = st.selectbox("Filtrar por Tag de Cor:", options=cores_disponiveis, key="filtro_cor_venda")
+
+    df_filtrado = st.session_state["estoque"].copy()
+    if filtro_cor != "Todas":
+        df_filtrado = df_filtrado[df_filtrado["Cor da Tag"] == filtro_cor]
+
+    if df_filtrado.empty:
+        st.info("Nenhum produto encontrado com a tag de cor selecionada.")
+        return
+
+    # --- Exibir Produtos em Seções com Imagens ---
+    st.subheader("Produtos Disponíveis")
+    
+    produtos_para_exibir = df_filtrado.reset_index().rename(columns={'index': 'ID_Original'})
+
+    cores_css = {
+        "Nenhuma": "transparent",
+        "Vermelho": "#FF0000", "Azul": "#0000FF", "Verde": "#008000",
+        "Amarelo": "#FFFF00", "Laranja": "#FFA500", "Roxo": "#800080",
+        "Preto": "#000000", "Branco": "#FFFFFF"
+    }
+
+    st.markdown("---")
+    # Layout de colunas para exibir produtos
+    cols_per_row = 3 # Número de colunas de produtos por linha
+    
+    # Lista para manter os inputs de quantidade para o carrinho
+    quantidades_selecionadas = {}
+
+    for i, row in produtos_para_exibir.iterrows():
+        if i % cols_per_row == 0:
+            cols = st.columns(cols_per_row)
+        
+        with cols[i % cols_per_row]:
+            st.markdown(f"**{row['Nome do Produto']}**")
+            st.write(f"Estoque: {int(row['Quantidade'])} unidades")
+            st.write(f"Preço: R$ {row['Preço de Compra (R$)']:.2f}") # Exibir preço para o cliente
+
+            if row["Imagem"]:
+                try:
+                    img_data = base64.b64decode(row["Imagem"])
+                    st.image(img_data, width=150, use_column_width="always")
+                except Exception:
+                    st.image("https://via.placeholder.com/150?text=Sem+Imagem", width=150, use_column_width="always")
+            else:
+                st.image("https://via.placeholder.com/150?text=Sem+Imagem", width=150, use_column_width="always")
+
+            # Tag de cor
+            if row["Cor da Tag"] != "Nenhuma":
+                st.markdown(
+                    f"""
+                    <div style="
+                        display: inline-block; 
+                        padding: 5px 10px; 
+                        border-radius: 5px; 
+                        background-color: {cores_css.get(row['Cor da Tag'], 'gray')}; 
+                        color: {'black' if row['Cor da Tag'] in ['Amarelo', 'Branco'] else 'white'}; 
+                        font-size: 0.8em;
+                        margin-top: 5px;
+                    ">
+                        {row['Cor da Tag']}
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+            
+            # Input de quantidade para adicionar ao carrinho
+            max_qty = int(row['Quantidade'])
+            qty_key = f"qty_select_{row['ID_Original']}"
+            
+            # Inicializa a quantidade no carrinho se já estiver lá
+            current_qty_in_cart = st.session_state["carrinho"].get(row['ID_Original'], 0)
+            
+            # Ajusta o min_value para 0 se o produto não estiver no carrinho para permitir "remover"
+            min_val_qty_input = 0 if current_qty_in_cart > 0 else 0 
+
+            quantidade_selecionada = st.number_input(
+                f"Quant. para retirar ({row['Nome do Produto']}):",
+                min_value=min_val_qty_input,
+                max_value=max_qty + current_qty_in_cart, # Permite aumentar a quantidade se já no carrinho
+                value=current_qty_in_cart,
+                step=1,
+                key=qty_key,
+                help=f"Disponível: {max_qty} unidades"
+            )
+
+            # Atualiza o carrinho quando o número é alterado
+            if quantidade_selecionada > 0:
+                st.session_state["carrinho"][row['ID_Original']] = quantidade_selecionada
+            elif quantidade_selecionada == 0 and row['ID_Original'] in st.session_state["carrinho"]:
+                del st.session_state["carrinho"][row['ID_Original']]
+            
+            st.markdown("---") # Separador para cada produto
+
+    # --- Carrinho de Compras / Finalizar Retirada ---
+    st.subheader("Seu Carrinho")
+    if not st.session_state["carrinho"]:
+        st.info("Seu carrinho está vazio.")
+    else:
+        carrinho_df_data = []
+        total_valor_retirada = 0
+        for produto_id, quantidade_no_carrinho in st.session_state["carrinho"].items():
+            produto = st.session_state["estoque"].loc[produto_id]
+            subtotal = produto["Preço de Compra (R$)"] * quantidade_no_carrinho
+            carrinho_df_data.append({
+                "Produto": produto["Nome do Produto"],
+                "Quantidade": quantidade_no_carrinho,
+                "Preço Unitário": f"R$ {produto['Preço de Compra (R$)']:.2f}",
+                "Subtotal": f"R$ {subtotal:.2f}"
+            })
+            total_valor_retirada += subtotal
+        
+        carrinho_df = pd.DataFrame(carrinho_df_data)
+        st.table(carrinho_df)
+        st.markdown(f"**Valor Total da Retirada: R$ {total_valor_retirada:,.2f}**")
+
+        if st.button("Finalizar Retirada", key="finalizar_retirada_button"):
+            sucesso_retirada = True
+            mensagens = []
+            for produto_id, quantidade_retirar in st.session_state["carrinho"].items():
+                if quantidade_retirar > 0:
+                    produto_no_estoque = st.session_state["estoque"].loc[produto_id]
+                    if produto_no_estoque["Quantidade"] >= quantidade_retirar:
+                        st.session_state["estoque"].loc[produto_id, "Quantidade"] -= quantidade_retirar
+                        mensagens.append(f"{quantidade_retirar} unidades de '{produto_no_estoque['Nome do Produto']}' retiradas.")
+                    else:
+                        sucesso_retirada = False
+                        st.error(f"Erro: Não há estoque suficiente para '{produto_no_estoque['Nome do Produto']}'. Disponível: {produto_no_estoque['Quantidade']}.")
+                        break # Para a retirada se houver erro
+            
+            if sucesso_retirada:
+                st.success("Retirada finalizada com sucesso!")
+                for msg in mensagens:
+                    st.write(msg)
+                st.session_state["carrinho"] = {} # Limpa o carrinho
+                st.rerun() # Atualiza a exibição do estoque e produtos
+            else:
+                st.error("Por favor, ajuste as quantidades no carrinho.")
+
+# --- Estrutura Principal do Aplicativo ---
+def main():
+    st.sidebar.title("Navegação")
+    
+    # Lógica de autenticação na sidebar
+    if not st.session_state["logado"]:
+        st.sidebar.subheader("Login (Admin)")
+        username = st.sidebar.text_input("Usuário", key="login_username")
+        password = st.sidebar.text_input("Senha", type="password", key="login_password")
+        if st.sidebar.button("Entrar como Admin"):
+            # Substitua 'admin' e '123' pelas suas credenciais reais
+            if username == "admin" and password == "123": 
+                st.session_state["logado"] = True
+                st.success("Login de administrador realizado com sucesso!")
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos.")
+    else:
+        st.sidebar.success("Logado como Administrador!")
+        if st.sidebar.button("Sair (Admin)"):
+            st.session_state["logado"] = False
+            # Opcional: limpa o estoque ou outras sessões de estado ao deslogar
+            st.session_state["produto_selecionado_id"] = None
+            st.session_state["carrinho"] = {}
+            st.rerun()
+
+    # Seleção de página
+    if st.session_state["logado"]:
+        # Se for admin, pode navegar entre as duas páginas
+        page_selection = st.sidebar.radio(
+            "Ir para:",
+            ["Gerenciador de Estoque", "Vendas/Retirada"],
+            key="admin_page_nav"
+        )
+        if page_selection == "Gerenciador de Estoque":
+            pagina_gerenciamento_estoque()
+        elif page_selection == "Vendas/Retirada":
+            pagina_venda()
+    else:
+        # Se não for admin (usuário comum), só vê a página de Vendas/Retirada
+        st.sidebar.info("Acesso de Usuário Comum: Vendas/Retirada")
+        pagina_venda()
+
+if __name__ == "__main__":
+    main()
