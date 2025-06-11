@@ -126,24 +126,24 @@ st.set_page_config(
 # )
 
 # Imagem da logo no fundo do site
-st.image ("iamg.png",use_container_width = True)
+# st.image ("iamg.png",use_container_width = True)
 
-# Carregar logo e título
-logo_path = "iamg.png" # O caminho da imagem do logo também deve ser relativo e na mesma pasta
+# # Carregar logo e título
+# logo_path = "iamg.png" # O caminho da imagem do logo também deve ser relativo e na mesma pasta
 
-logo_imagem = None
-try:
-    logo_imagem = Image.open(logo_path)
-    st.logo(logo_imagem, size="large", link="http://localhost:8501")
-    st.title(" App de Estoque")
-except FileNotFoundError:
-    st.error(f"Arquivo de logo não encontrado em '{logo_path}'. Verifique o caminho.")
-    st.title("Meu App de Estoque")
-except Exception as e:
-    st.error(f"Ocorreu um erro ao carregar o logo: {e}")
-    st.title("App de Estoque")
-
-st.write('---')
+# logo_imagem = None
+# try:
+#     logo_imagem = Image.open(logo_path)
+#     st.logo(logo_imagem, size="large", link="http://localhost:8501")
+#     st.title(" App de Estoque")
+# except FileNotFoundError:
+#     st.error(f"Arquivo de logo não encontrado em '{logo_path}'. Verifique o caminho.")
+#     st.title("Meu App de Estoque")
+# except Exception as e:
+#     st.error(f"Ocorreu um erro ao carregar o logo: {e}")
+#     st.title("App de Estoque")
+st.title("Estoque Maker")
+ st.write('---')
 
 def pagina_cadastro_login():
     st.header("Bem-vindo(a)! Faça Login ou Cadastre-se")
