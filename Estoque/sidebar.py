@@ -143,7 +143,7 @@ st.set_page_config(
 #     st.error(f"Ocorreu um erro ao carregar o logo: {e}")
 #     st.title("App de Estoque")
 st.title("Estoque Maker")
- st.write('---')
+st.write('---')
 
 def pagina_cadastro_login():
     st.header("Bem-vindo(a)! Faça Login ou Cadastre-se")
